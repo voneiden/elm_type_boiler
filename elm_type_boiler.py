@@ -1,20 +1,43 @@
 import argparse
 import os
 import re
+from functools import wraps
 
-re_type_definition = r'type\s+([A-Z][\w]+)\s*=((?:\s*[A-Z][\w]+\s*(?<!\n)[|](?!\s*\n))*(?:\s*[A-Z][\w]+\s*(?:\n|$)))'
+re_type_definition = (
+    r'((?:--.+\n)+)'  # Match comments
+    r'type\s+([A-Z][\w]+)\s*='  # Match type name
+    r'((?:\s*[A-Z][\w]+\s*(?<!\n)[|](?!\s*\n))*'  # Match non-last constructor 
+    r'(?:\s*[A-Z][\w]+\s*(?:\n|$)))'  # Match last constructor
+)
 
 
+def blank(blanks=2):
+    buffer = [''] * blanks
+
+    def decorator(f):
+        @wraps(f)
+        def wrapper(*args, **kwargs):
+            r = f(*args, **kwargs)
+            r += buffer
+            return r
+
+        return wrapper
+
+    return decorator
+
+
+@blank()
 def generate_type_list(name, types):
     return [
         f'list : List {name}',
         f'list =',
         f'    [{types[0]}',
         *[f'    ,{t}' for t in types[1:]],
-        f'    ]', '', ''
+        f'    ]'
     ]
 
 
+@blank()
 def generate_to_string(name, types):
     var = name.lower()
     return [
@@ -22,6 +45,18 @@ def generate_to_string(name, types):
         f'toString {var} =',
         f'    case {var} of',
         *[f'        {t} -> "{t}"' for t in types]
+    ]
+
+
+@blank()
+def generate_from_string(name, types):
+    var = name.lower()
+    return [
+        f'fromString : String -> Maybe {name}',
+        f'fromString {var} =',
+        f'    case {var} of',
+        *[f'        "{t}" -> Just {t}' for t in types],
+        f'        _ -> Nothing'
     ]
 
 
@@ -36,6 +71,7 @@ def generate_type_helpers(input_module, output_module, output_folder_path, name,
 
     buffer += generate_type_list(name, types)
     buffer += generate_to_string(name, types)
+    buffer += generate_from_string(name, types)
 
     print("BUFFER", buffer)
 
@@ -51,9 +87,11 @@ def process(src_root, input_module, output_module):
     with open(input_file_path, 'r') as f:
         input_data = f.read()
 
-    for name, raw_types in re.findall(re_type_definition, input_data):
+    for raw_comments, name, raw_types in re.findall(re_type_definition, input_data):
+        comments = [c[2:].strip() for c in raw_comments.split('\n')]
         types = [t.strip() for t in raw_types.split('|')]
-        generate_type_helpers(input_module, output_module, output_folder_path, name, types)
+        if '@generate helpers' in comments:
+            generate_type_helpers(input_module, output_module, output_folder_path, name, types)
 
 
 if __name__ == '__main__':
@@ -61,5 +99,5 @@ if __name__ == '__main__':
     parser.add_argument('src_root')
     parser.add_argument('input_module')
     parser.add_argument('output_module')
-    args = parser.parse_args()
-    process(args.src_root, args.input_module, args.output_module)
+    parser_args = parser.parse_args()
+    process(parser_args.src_root, parser_args.input_module, parser_args.output_module)
